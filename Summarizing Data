@@ -1,0 +1,231 @@
+Summary statistic queries are very useful and may even often be your main focus
+
+1. Aggregate functions
+Aggregate Functions (9:19)
+
+summary:
+
+Aggregate function: a function that takes a series of values and aggregates them into one result
+
+example:
+
+USE sql_invoicing;
+
+SELECT
+     MAX(invoice_date) AS latest_date,
+     -- SELECT can select not only columns, but also numbers, expressions between columns, and aggregate functions of columns
+     MIN(invoice_total) lowest,
+     AVG(invoice_total) average,
+     SUM(invoice_total * 1.1) total,
+     COUNT(*) total_records,
+     COUNT(invoice_total) number_of_invoices,
+     -- equal to the previous one
+     COUNT(payment_date) number_of_payments,
+     -- [The aggregation function will ignore null values], the number of payments obtained is less than the number of invoices
+     COUNT(DISTINCT client_id) number_of_distinct_clients
+     -- DISTINCT client_id filters out the duplicate values of this column, and then counts with COUNT to get the number of different customers
+FROM invoices
+WHERE invoice_date > '2019-07-01' -- want to only count the results of the second half of the year
+
+2. GROUP BY clause
+The GROUP BY Clause (7:21)
+
+summary
+
+Group by one or more columns, paying attention to the position of the statement.
+
+Case 1: Group by one field
+
+In the invoice record table, the total sales in the second half of the year are grouped by different customers and sorted in descending order
+
+USE sql_invoicing;
+
+SELECT
+    client_id,
+    SUM(invoice_total) AS total_sales
+    ...
+Only when the aggregation function is grouped by client_id, it makes sense to select the client_id column here (SELECT in the grouping statistics statement usually selects the aggregation function of the grouping basis column + the target statistics column, and it is meaningless to select other columns). If it is not classified, the result will be a total_sales and a client_id (the client_id is meaningless), that is, the client_id will be compressed to display only one instead of SUM broadcast as multiple, which can be understood as the aggregation function is relatively strong.
+
+...
+FROM invoices
+WHERE invoice_date >= '2019-07-01' -- filter, filter
+GROUP BY client_id -- group by
+ORDER BY invoice_total DESC
+If you omit the sort statement, it will be sorted by grouping by default (the latter example does not seem to be necessary, so it is best not to omit it)
+
+Remember that the order of the statement is very important. WHERE GROUP BY ORDER BY, before the grouping statement, if the order is reversed, an error will be reported
+
+Case 2: Group by multiple fields
+
+Calculate the total sales by state and city
+
+As mentioned earlier, the general grouping by field is also the selection field in SELECT ... , such as state and city in the following example
+
+USE sql_invoicing;
+
+SELECT
+    state,
+    city,
+    SUM(invoice_total) AS total_sales
+FROM invoices
+JOIN clients USING (client_id)
+-- Don't forget the parentheses after USING, it's too easy to forget
+GROUP BY state, city
+-- comma separated
+-- In this example, removing state from GROUP BY has the same result
+ORDER BY state
+In fact, in the above example, a city can only belong to one state. In the final analysis, the sales of each city are still counted. GROUP BY ... remove the state and write only the city (but keep the state in the SELECT and ORDER BY) and the result is exactly the same (including the state column in the result), the following example can better illustrate the significance of grouping statistics based on multiple fields
+
+practise
+
+In the payments table, total payments grouped by date and payment method
+
+Each grouping displays an independent combination of date and payment method, allowing you to see the total payment amount for a specific payment method on a particular date. In this example, each payment method can appear on different days, and multiple payment methods can appear every day. This situation is called true multi-field grouping. However, for the fake multi-field grouping in the previous example, there is no harm in adding state to the grouping basis.
+
+USE sql_invoicing;
+
+SELECT
+    date,
+    pm.name AS payment_method,
+    SUM(amount) AS total_payments
+FROM payments p
+JOIN payment_methods pm
+    ON p.payment_method = pm.payment_method_id
+GROUP BY date, payment_method
+-- use the column alias in the SELECT
+ORDER BY date
+Thought
+
+When solving complex problems, learn to break them down into simple small problems or break them one by one in small steps. Reasonable use of decomposition and combination and IPO (input-process-output input-process-output) ideas.
+
+3. HAVING clause
+The HAVING Clause (8:50)
+
+summary
+
+Both HAVING and WHERE are conditional filter statements. Conditions are written in the same way. Math, comparison (including special comparison), and logical operations can be used (such as AND, REGEXP, etc.)
+
+The essential difference between the two:
+
+WHERE is to filter the columns in the original table in FROM JOIN in advance, so WHERE can filter the unselected columns, but the column name of the original table must be used instead of the column alias determined in SELECT.
+On the contrary, HAVING ...... performs post-filtering on the result columns after SELECT ...... query (usually after grouping and aggregation query). to filter. The only special case is that when HAVING filters an aggregate function, the aggregate function can not appear explicitly in the SELECT, see the final supplement
+case
+
+Filter out customers with total invoice amount greater than 500 and total invoice quantity greater than 5
+
+USE sql_invoicing;
+
+SELECT
+    client_id,
+    SUM(invoice_total) AS total_sales,
+    COUNT(*/invoice_total/invoice_date) AS number_of_invoices
+FROM invoices
+GROUP BY client_id
+HAVING total_sales > 500 AND number_of_invoices > 5
+-- Both are column aliases in SELECT
+If you write: WHERE total_sales > 500 AND number_of_invoices > 5, an error will be reported: Error Code: 1054. Unknown column 'total_sales' in 'where clause'
+
+practise
+
+In the sql_store database (with customers table, order table, order items table, etc.), find customers in state 'VA' who have spent more than $100 in total (this is an interview-level question, and it is very common)
+
+Ideas:
+1. The required information is in the customer table, the order table, and the order item table three tables, first combine the three tables
+2. WHERE pre-screening for 'VA' states
+3. Group by customer and select the desired column and aggregate to get the total payment per customer
+4. HAVING post-screening over $100
+
+USE sql_store;
+
+SELECT
+    c.customer_id,
+    c.first_name,
+    c.last_name,
+    SUM(oi.quantity * oi.unit_price) AS total_sales
+FROM customers c
+JOIN orders o USING (customer_id) -- don't forget the parentheses, it's easy to forget
+JOIN order_items oi USING (order_id)
+WHERE state = 'VA'
+GROUP BY
+    c.customer_id,
+    c.first_name,
+    c.last_name
+HAVING total_sales > 100
+Replenish
+
+When I studied Chapter 6, Section 6, I found that when HAVING filters an aggregate function, the aggregate function can not appear explicitly in SELECT. (As a special case that needs to be remembered) For example: the following two ways of writing can filter out states with a total number of points greater than 3k. If the total number of points is not required to be displayed, the latter one should be used
+
+SELECT state, SUM(points)
+FROM customers
+GROUP BY state
+HAVING SUM(points) > 3000
+
+or
+
+SELECT state
+FROM customers
+GROUP BY state
+HAVING SUM(points) > 3000
+4. ROLLUP operator
+The ROLLUP Operator (5:05)
+
+GROUP BY ...... WITH ROLL UP Automatic summary grouping. If there are multiple fields grouping, the summary will be multi-level. Note that this is MySQL extended syntax, not SQL standard syntax
+
+case
+
+Query the total invoice amount of each customer and the total invoice amount of all owners in groups
+
+USE sql_invoicing;
+
+SELECT
+    client_id,
+    SUM(invoice_total)
+FROM invoices
+GROUP BY client_id WITH ROLLUP
+Multi-field grouping Example 1: Group query for the total sales (total invoices) of each state and city, and the two-level summary of the state level and the national level
+
+SELECT
+    state,
+    city,
+    SUM(invoice_total) AS total_sales
+FROM invoices
+JOIN clients USING (client_id)
+GROUP BY state, city WITH ROLLUP
+Multi-field grouping Example 2: Group query for the total payment amount of a specific payment method on a specific date, as well as single-day summary and overall summary
+
+USE sql_invoicing;
+
+SELECT
+    date,
+    pm.name AS payment_method,
+    SUM(amount) AS total_payments
+FROM payments p
+JOIN payment_methods pm
+    ON p.payment_method = pm.payment_method_id
+GROUP BY date, pm.name WITH ROLLUP
+practise
+
+Calculate the total payment for each payment method in groups and summarize
+
+SELECT
+    pm.name AS payment_method,
+    SUM(amount) AS total
+FROM payments p
+JOIN payment_methods pm
+    ON p.payment_method = pm.payment_method_id
+GROUP BY pm.name WITH ROLLUP
+★Summary
+
+According to the following three reference articles, it is said that the execution order of a standard SQL query statement should be as follows:
+
+1. FROM JOIN selects and joins the tables required for this query
+2. ON/USING WHERE filter rows by condition
+3. GROUP BY
+4. HAVING (post/group post) filter rows
+5. SELECT filter column
+Note 1: If grouping is performed, this step often requires aggregation)
+Note 2: I still have some doubts about the execution order of SELECT and HAVING in MySQL, see the following description
+6. DISTINCT
+7. UNION vertical merger
+8. ORDER BY
+9. LIMIT limit
